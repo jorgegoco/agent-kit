@@ -1,5 +1,9 @@
 # AgentKit
 
+![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
+![uv](https://img.shields.io/badge/uv-package%20manager-purple.svg)
+
 A flexible agent framework that seamlessly combines **AISuite** (local tools) and **Model Context Protocol (MCP)** (remote tool servers) for powerful, modular AI agent development.
 
 ## ✨ Features
@@ -16,7 +20,7 @@ A flexible agent framework that seamlessly combines **AISuite** (local tools) an
 
 ```bash
 # Clone the repository
-git clone <your-repo-url> agent-kit
+git clone https://github.com/jorgegoco/agent-kit.git
 cd agent-kit
 
 # Install dependencies
@@ -35,21 +39,21 @@ import asyncio
 
 async def main():
     agent = HybridAgent()
-    
+
     # Add a local tool
     def greet(name: str) -> str:
         """Say hello to someone"""
         return f"Hello, {name}!"
-    
+
     agent.add_local_tool(greet)
-    
+
     # Add an MCP server
     await agent.add_mcp_server(
         "time",
         "uv",
         ["run", "src/servers/time_server.py"]
     )
-    
+
     # Use both types of tools seamlessly
     result = await agent.process_query(
         "Greet Alice and tell me what time it is"
@@ -87,6 +91,7 @@ agent-kit/
 ## 🎯 Use Cases
 
 ### Hybrid Agent (Recommended)
+
 Best for most projects - combines local tools for simple operations with MCP servers for complex, reusable functionality:
 
 ```python
@@ -96,6 +101,7 @@ await agent.add_mcp_server("research", ...)  # Complex, reusable
 ```
 
 ### Multi-Server Agent
+
 Ideal for production systems with multiple specialized services:
 
 ```python
@@ -162,8 +168,8 @@ MIT License - see [LICENSE](LICENSE) file for details
 ## 📞 Support
 
 - 📖 [Documentation](docs/)
-- 🐛 [Issue Tracker](https://github.com/your-username/agent-kit/issues)
-- 💬 [Discussions](https://github.com/your-username/agent-kit/discussions)
+- 🐛 [Issue Tracker](https://github.com/jorgegoco/agent-kit/issues)
+- 💬 [Discussions](https://github.com/jorgegoco/agent-kit/discussions)
 
 ---
 
