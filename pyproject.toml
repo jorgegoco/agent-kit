@@ -5,9 +5,10 @@ description = "A flexible agent framework combining AISuite and MCP for powerful
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "aisuite>=0.1.13",
     "anthropic>=0.40.0",
-    "aisuite>=0.1.0",
     "mcp>=1.0.0",
+    "openai>=2.8.0",
     "python-dotenv>=1.0.0",
 ]
 
