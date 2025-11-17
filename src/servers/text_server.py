@@ -6,7 +6,7 @@ from mcp.server.fastmcp import FastMCP
 import os
 import json
 
-mcp = FastMCP("text", description="Text manipulation and file operations")
+mcp = FastMCP("text")
 
 
 @mcp.tool()

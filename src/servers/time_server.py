@@ -6,7 +6,7 @@ from mcp.server.fastmcp import FastMCP
 from datetime import datetime, timedelta
 from typing import Optional
 
-mcp = FastMCP("time", description="Time and date utilities")
+mcp = FastMCP("time")
 
 
 @mcp.tool()

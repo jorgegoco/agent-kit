@@ -6,7 +6,7 @@ from mcp.server.fastmcp import FastMCP
 import math
 from typing import List
 
-mcp = FastMCP("math", description="Mathematical calculation tools")
+mcp = FastMCP("math")
 
 
 @mcp.tool()
