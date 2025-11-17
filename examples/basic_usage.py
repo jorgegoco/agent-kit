@@ -3,6 +3,9 @@ Basic usage example - Simple local tools with AISuite
 """
 import aisuite as ai
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 def get_time() -> str:
