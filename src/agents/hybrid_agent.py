@@ -8,10 +8,17 @@ and remote tools (accessed via MCP servers) in the same agent.
 import aisuite as ai
 import asyncio
 import json
+import os
+from dotenv import load_dotenv
 from datetime import datetime
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from typing import Dict, List, Any, Optional
+import inspect
+from openai import OpenAI
+
+# Load environment variables from .env file
+load_dotenv()
 
 # ==================== LOCAL TOOLS (AISuite) ====================
 
@@ -62,6 +69,7 @@ class MCPConnector:
         self.sessions: Dict[str, ClientSession] = {}
         self.tools: Dict[str, Dict[str, Any]] = {}  # tool_name -> tool_info
         self.tool_to_server: Dict[str, str] = {}  # tool_name -> server_name
+        self._contexts: Dict[str, Any] = {}  # Store context managers
     
     async def add_server(self, server_name: str, command: str, args: List[str]) -> List[str]:
         """
@@ -76,36 +84,42 @@ class MCPConnector:
             List of tool names from this server
         """
         print(f"🔌 Connecting to {server_name} server...")
-        
+
         server_params = StdioServerParameters(command=command, args=args)
-        
-        # Create streams for communication
-        async with stdio_client(server_params) as (read, write):
-            session = ClientSession(read, write)
-            await session.__aenter__()
-            await session.initialize()
-            
-            # Get available tools from the server
-            response = await session.list_tools()
-            tool_names = []
-            
-            for tool in response.tools:
-                tool_name = tool.name
-                tool_names.append(tool_name)
-                
-                # Store tool information
-                self.tools[tool_name] = {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "input_schema": tool.inputSchema
-                }
-                self.tool_to_server[tool_name] = server_name
-            
-            # Store the session
-            self.sessions[server_name] = session
-            
-            print(f"✅ Connected to {server_name} with tools: {tool_names}")
-            return tool_names
+
+        # Create and store the context manager
+        stdio_context = stdio_client(server_params)
+        read, write = await stdio_context.__aenter__()
+
+        # Store the context so we can clean it up later
+        self._contexts[server_name] = stdio_context
+
+        # Create and initialize session
+        session = ClientSession(read, write)
+        await session.__aenter__()
+        await session.initialize()
+
+        # Get available tools from the server
+        response = await session.list_tools()
+        tool_names = []
+
+        for tool in response.tools:
+            tool_name = tool.name
+            tool_names.append(tool_name)
+
+            # Store tool information
+            self.tools[tool_name] = {
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": tool.inputSchema
+            }
+            self.tool_to_server[tool_name] = server_name
+
+        # Store the session
+        self.sessions[server_name] = session
+
+        print(f"✅ Connected to {server_name} with tools: {tool_names}")
+        return tool_names
     
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """
@@ -138,6 +152,17 @@ class MCPConnector:
         """Get tool schemas in AISuite format"""
         return list(self.tools.values())
 
+    async def cleanup(self):
+        """Clean up all connections"""
+        for server_name, session in self.sessions.items():
+            try:
+                await session.__aexit__(None, None, None)
+                context = self._contexts.get(server_name)
+                if context:
+                    await context.__aexit__(None, None, None)
+            except Exception as e:
+                print(f"⚠️ Error cleaning up {server_name}: {e}")
+
 
 # ==================== HYBRID AGENT ====================
 
@@ -148,9 +173,19 @@ class HybridAgent:
     
     def __init__(self):
         self.ai_client = ai.Client()
+        self.openai_client = OpenAI()  # For MCP tool support with OpenAI
         self.mcp = MCPConnector()
         self.local_tools = []
         self.local_tool_map = {}
+
+    async def __aenter__(self):
+        """Enter async context - agent is ready to use"""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Exit async context - cleanup all MCP connections"""
+        await self.cleanup()
+        return False
     
     def add_local_tool(self, func):
         """
@@ -188,36 +223,47 @@ class HybridAgent:
             Final response from the agent
         """
         print(f"\n💭 Processing query: {query}\n")
-        
-        # Combine all tools
-        all_tools = self.local_tools.copy()
+
+        # Build combined tool schemas for OpenAI API
+        tool_schemas = []
+
+        # Convert local tools to OpenAI tool schema format
+        for func in self.local_tools:
+            schema = self._function_to_schema(func)
+            tool_schemas.append(schema)
+
+        # Convert MCP tool schemas to OpenAI format
         mcp_tool_schemas = self.mcp.get_tool_schemas()
-        all_tools.extend(mcp_tool_schemas)
-        
+        for mcp_schema in mcp_tool_schemas:
+            openai_schema = self._mcp_to_openai_schema(mcp_schema)
+            tool_schemas.append(openai_schema)
+
         messages = [{"role": "user", "content": query}]
-        
+
         for turn in range(max_turns):
             print(f"📍 Turn {turn + 1}/{max_turns}")
-            
-            # Get response from LLM
-            response = self.ai_client.chat.completions.create(
-                model=model,
+
+            # Use OpenAI API directly to support both local and MCP tools
+            response = self.openai_client.chat.completions.create(
+                model=model.replace("openai:", "") if model.startswith("openai:") else model,
                 messages=messages,
-                tools=all_tools,
-                max_turns=0  # We handle turns manually
+                tools=tool_schemas if tool_schemas else None
             )
-            
+
             message = response.choices[0].message
-            
-            # If no tool calls, we're done
-            if not hasattr(message, 'tool_calls') or not message.tool_calls:
+
+            # Check if we're done (no tool calls)
+            if not message.tool_calls:
                 print("✨ Final response generated\n")
                 return message.content
-            
-            # Add assistant message
+
+            # Handle tool calls (OpenAI format)
+            print(f"  🔧 {len(message.tool_calls)} tool call(s) requested")
+
+            # Add assistant message with tool calls
             messages.append({
                 "role": "assistant",
-                "content": message.content or "",
+                "content": message.content,
                 "tool_calls": [
                     {
                         "id": tc.id,
@@ -229,14 +275,14 @@ class HybridAgent:
                     } for tc in message.tool_calls
                 ]
             })
-            
+
             # Execute each tool call
             for tool_call in message.tool_calls:
                 tool_name = tool_call.function.name
                 tool_args = json.loads(tool_call.function.arguments)
-                
+
                 print(f"  🔧 Tool call: {tool_name}({tool_args})")
-                
+
                 # Determine if local or remote tool
                 if tool_name in self.local_tool_map:
                     # Execute local tool
@@ -246,16 +292,66 @@ class HybridAgent:
                     # Execute MCP tool
                     result = await self.mcp.call_tool(tool_name, tool_args)
                     print(f"  ✅ MCP tool result: {result}")
-                
-                # Add tool result to messages
+
+                # Add tool result to messages (OpenAI format)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
                     "content": str(result)
                 })
-        
+
         print("⚠️ Reached maximum turns")
         return "I've reached the maximum number of tool calls. Please try again."
+
+    def _function_to_schema(self, func) -> dict:
+        """Convert a Python function to OpenAI tool schema format"""
+        sig = inspect.signature(func)
+        properties = {}
+        required = []
+
+        for param_name, param in sig.parameters.items():
+            # Get type annotation
+            param_type = param.annotation if param.annotation != inspect.Parameter.empty else str
+
+            # Convert Python type to JSON schema type
+            if param_type == int:
+                json_type = "integer"
+            elif param_type == float:
+                json_type = "number"
+            elif param_type == bool:
+                json_type = "boolean"
+            else:
+                json_type = "string"
+
+            properties[param_name] = {"type": json_type}
+
+            # Check if required (no default value)
+            if param.default == inspect.Parameter.empty:
+                required.append(param_name)
+
+        return {
+            "type": "function",
+            "function": {
+                "name": func.__name__,
+                "description": func.__doc__ or f"Call {func.__name__}",
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required
+                }
+            }
+        }
+
+    def _mcp_to_openai_schema(self, mcp_schema: dict) -> dict:
+        """Convert MCP tool schema to OpenAI format"""
+        return {
+            "type": "function",
+            "function": {
+                "name": mcp_schema["name"],
+                "description": mcp_schema["description"],
+                "parameters": mcp_schema["input_schema"]  # MCP uses input_schema, OpenAI uses parameters
+            }
+        }
     
     async def chat_loop(self, model: str = "openai:gpt-4o-mini"):
         """
@@ -306,41 +402,46 @@ class HybridAgent:
             except Exception as e:
                 print(f"\n❌ Error: {str(e)}\n")
 
+    async def cleanup(self):
+        """Clean up MCP connections"""
+        await self.mcp.cleanup()
+
 
 # ==================== EXAMPLE USAGE ====================
 
 async def main():
-    """Example usage of the Hybrid Agent"""
-    
-    # Initialize the agent
-    agent = HybridAgent()
-    
-    # Add local tools
-    agent.add_local_tool(get_current_time)
-    agent.add_local_tool(calculate_sum)
-    agent.add_local_tool(create_greeting)
-    
-    # Add MCP servers
-    # Example: If you have a research server
-    # await agent.add_mcp_server("research", "uv", ["run", "research_server.py"])
-    
-    # Example queries
-    print("\n" + "="*60)
-    print("🧪 Testing Hybrid Agent")
-    print("="*60 + "\n")
-    
-    # Test local tool
-    result = await agent.process_query("What time is it?")
-    print(f"Result: {result}\n")
-    
-    # Test multiple tools
-    result = await agent.process_query(
-        "Calculate the sum of 42 and 58, then create a greeting for Alice"
-    )
-    print(f"Result: {result}\n")
-    
-    # Start interactive chat (uncomment to use)
-    # await agent.chat_loop()
+    """Example usage of the Hybrid Agent with context manager"""
+
+    # Use async context manager for automatic cleanup
+    async with HybridAgent() as agent:
+        # Add local tools
+        agent.add_local_tool(get_current_time)
+        agent.add_local_tool(calculate_sum)
+        agent.add_local_tool(create_greeting)
+
+        # Add MCP servers
+        # Example: If you have a research server
+        # await agent.add_mcp_server("research", "uv", ["run", "research_server.py"])
+
+        # Example queries
+        print("\n" + "="*60)
+        print("🧪 Testing Hybrid Agent")
+        print("="*60 + "\n")
+
+        # Test local tool
+        result = await agent.process_query("What time is it?")
+        print(f"Result: {result}\n")
+
+        # Test multiple tools
+        result = await agent.process_query(
+            "Calculate the sum of 42 and 58, then create a greeting for Alice"
+        )
+        print(f"Result: {result}\n")
+
+        # Start interactive chat (uncomment to use)
+        # await agent.chat_loop()
+
+    # Cleanup happens automatically when exiting the context
 
 
 if __name__ == "__main__":
