@@ -13,7 +13,33 @@ The `HybridAgent` combines local (AISuite) tools with remote (MCP) tools in a si
 ```python
 from src.agents.hybrid_agent import HybridAgent
 
+# Recommended: Use as async context manager
+async with HybridAgent() as agent:
+    # Use agent here
+    pass  # Cleanup happens automatically
+
+# Alternative: Manual construction (requires manual cleanup)
 agent = HybridAgent()
+# ... use agent ...
+await agent.cleanup()  # Must call cleanup manually
+```
+
+#### Async Context Manager
+
+HybridAgent implements the async context manager protocol for automatic resource cleanup.
+
+**Methods:**
+- `__aenter__()` - Enter the async context
+- `__aexit__()` - Exit and cleanup MCP connections automatically
+
+**Example:**
+```python
+async with HybridAgent() as agent:
+    agent.add_local_tool(my_function)
+    await agent.add_mcp_server("time", "uv", ["run", "time_server.py"])
+    result = await agent.process_query("What time is it?")
+    print(result)
+# All MCP connections are automatically closed here
 ```
 
 #### Methods
@@ -91,6 +117,20 @@ await agent.chat_loop()
 - `quit` - Exit the chat
 - `help` - Show available commands
 - `tools` - List all available tools
+
+##### `cleanup()` (async)
+
+Clean up all MCP server connections. Only needed if not using context manager.
+
+**Example:**
+```python
+agent = HybridAgent()
+await agent.add_mcp_server("time", "uv", ["run", "time_server.py"])
+# ... use agent ...
+await agent.cleanup()  # Clean up connections
+```
+
+**Note:** This is called automatically when using `async with HybridAgent()`.
 
 ---
 

@@ -38,27 +38,28 @@ from src.agents.hybrid_agent import HybridAgent
 import asyncio
 
 async def main():
-    agent = HybridAgent()
+    # Use async context manager for automatic cleanup
+    async with HybridAgent() as agent:
+        # Add a local tool
+        def greet(name: str) -> str:
+            """Say hello to someone"""
+            return f"Hello, {name}!"
 
-    # Add a local tool
-    def greet(name: str) -> str:
-        """Say hello to someone"""
-        return f"Hello, {name}!"
+        agent.add_local_tool(greet)
 
-    agent.add_local_tool(greet)
+        # Add an MCP server
+        await agent.add_mcp_server(
+            "time",
+            "uv",
+            ["run", "src/servers/time_server.py"]
+        )
 
-    # Add an MCP server
-    await agent.add_mcp_server(
-        "time",
-        "uv",
-        ["run", "src/servers/time_server.py"]
-    )
-
-    # Use both types of tools seamlessly
-    result = await agent.process_query(
-        "Greet Alice and tell me what time it is"
-    )
-    print(result)
+        # Use both types of tools seamlessly
+        result = await agent.process_query(
+            "Greet Alice and tell me what time it is"
+        )
+        print(result)
+    # Cleanup happens automatically
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -95,9 +96,10 @@ agent-kit/
 Best for most projects - combines local tools for simple operations with MCP servers for complex, reusable functionality:
 
 ```python
-agent = HybridAgent()
-agent.add_local_tool(quick_calculation)  # Fast, simple
-await agent.add_mcp_server("research", ...)  # Complex, reusable
+async with HybridAgent() as agent:
+    agent.add_local_tool(quick_calculation)  # Fast, simple
+    await agent.add_mcp_server("research", ...)  # Complex, reusable
+    result = await agent.process_query("Your query here")
 ```
 
 ### Multi-Server Agent
